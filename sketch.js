@@ -7,77 +7,153 @@ let outputStream;
 let serialMessages = [];
 let maxMessages = 100;
 
-let titleDiv;
-let statusDiv;
-let instructionsDiv;
-let outputDiv;
+// Serial data values
+let xValue = 0.5;
+let yValue = 0.5;
+let zValue = 0.5;
+
+// Integrated position (velocity -> position)
+let integratedX = 0;
+let integratedY = 0;
+let integratedZ = 0;
+
+// Integration scaling factor (adjust for sensitivity)
+const integrationScale = 0.5;
+
+// Canvas and layout elements
+let canvas;
+let containerDiv;
+let canvasContainer;
+let terminalContainer;
 let messagesDiv;
 
+// Previous drawing position for line continuity
+let prevDrawX = null;
+let prevDrawY = null;
+
 async function setup() {
-  noCanvas(); // Don't create a canvas since we're using HTML elements
+  // Create main container with flex layout
+  containerDiv = createDiv();
+  containerDiv.style('display', 'flex');
+  containerDiv.style('flex-direction', 'column');
+  containerDiv.style('width', '100%');
+  containerDiv.style('height', '100vh');
+  containerDiv.style('margin', '0');
+  containerDiv.style('padding', '0');
   
-  // Create UI elements
-  titleDiv = createDiv('WebUSB Serial Monitor');
-  titleDiv.style('font-size', '24px');
-  titleDiv.style('font-weight', 'bold');
-  titleDiv.style('padding', '20px');
-  titleDiv.style('background-color', '#f0f0f0');
-  titleDiv.style('border-bottom', '2px solid #ccc');
+  // Canvas container (takes up remaining space)
+  canvasContainer = createDiv();
+  canvasContainer.style('flex', '1');
+  canvasContainer.style('display', 'flex');
+  canvasContainer.style('align-items', 'center');
+  canvasContainer.style('justify-content', 'center');
+  canvasContainer.style('background-color', '#1a1a1a');
+  canvasContainer.style('overflow', 'hidden');
+  canvasContainer.parent(containerDiv);
   
-  statusDiv = createDiv('Status: Disconnected');
-  statusDiv.style('padding', '10px 20px');
-  statusDiv.style('background-color', '#fff');
-  statusDiv.style('color', '#c00');
-  statusDiv.style('border-bottom', '1px solid #ccc');
+  // Create p5 canvas
+  const canvasWidth = canvasContainer.elt.clientWidth;
+  const canvasHeight = canvasContainer.elt.clientHeight;
+  canvas = createCanvas(canvasWidth || 800, canvasHeight || 400);
+  canvas.parent(canvasContainer);
+  canvas.style('display', 'block');
   
-  instructionsDiv = createDiv('Press SPACE to reconnect | Make sure your device uses CDC or WebUSB descriptors');
-  instructionsDiv.style('padding', '10px 20px');
-  instructionsDiv.style('background-color', '#fff');
-  instructionsDiv.style('color', '#666');
-  instructionsDiv.style('font-size', '12px');
-  instructionsDiv.style('border-bottom', '1px solid #ccc');
+  background(20);
+  stroke(255);
+  strokeWeight(2);
   
-  outputDiv = createDiv();
-  outputDiv.style('padding', '20px');
-  outputDiv.style('background-color', '#fff');
+  // Initialize integrated position to center
+  integratedX = width / 2;
+  integratedY = height / 2;
   
-  let outputTitle = createDiv('Serial Output:');
-  outputTitle.style('font-weight', 'bold');
-  outputTitle.style('margin-bottom', '10px');
-  outputTitle.parent(outputDiv);
+  // Terminal container (fixed height at bottom)
+  terminalContainer = createDiv();
+  terminalContainer.style('height', '200px');
+  terminalContainer.style('background-color', '#1e1e1e');
+  terminalContainer.style('border-top', '2px solid #444');
+  terminalContainer.style('display', 'flex');
+  terminalContainer.style('flex-direction', 'column');
+  terminalContainer.style('padding', '10px');
+  terminalContainer.style('overflow', 'hidden');
+  terminalContainer.parent(containerDiv);
   
+  // Terminal title and controls
+  let terminalHeader = createDiv('Terminal Output (Press SPACE to reconnect)');
+  terminalHeader.style('font-weight', 'bold');
+  terminalHeader.style('color', '#00ff00');
+  terminalHeader.style('font-family', 'Courier New, monospace');
+  terminalHeader.style('font-size', '12px');
+  terminalHeader.style('margin-bottom', '5px');
+  terminalHeader.parent(terminalContainer);
+  
+  // Messages display area
   messagesDiv = createDiv();
   messagesDiv.style('font-family', 'Courier New, monospace');
-  messagesDiv.style('font-size', '14px');
-  messagesDiv.style('background-color', '#1e1e1e');
+  messagesDiv.style('font-size', '11px');
+  messagesDiv.style('background-color', '#0a0a0a');
   messagesDiv.style('color', '#00ff00');
-  messagesDiv.style('padding', '15px');
-  messagesDiv.style('border-radius', '5px');
-  messagesDiv.style('max-height', '500px');
+  messagesDiv.style('padding', '8px');
+  messagesDiv.style('border-radius', '3px');
   messagesDiv.style('overflow-y', 'auto');
   messagesDiv.style('white-space', 'pre-wrap');
   messagesDiv.style('word-break', 'break-all');
   messagesDiv.style('user-select', 'text');
   messagesDiv.style('-webkit-user-select', 'text');
-  messagesDiv.style('-moz-user-select', 'text');
-  messagesDiv.style('-ms-user-select', 'text');
-  messagesDiv.parent(outputDiv);
+  messagesDiv.style('flex', '1');
+  messagesDiv.parent(terminalContainer);
   
   // Automatically open WebUSB device selector on page load
   await connectToDevice();
+  
+  // Handle window resize
+  window.addEventListener('resize', windowResized);
+}
+
+function draw() {
+  // Convert accelerometer readings to acceleration (centered at 1.65V = 0.5)
+  // Subtract 0.5 to center at 0, then scale for acceleration
+  const accelX = (xValue - 0.5) * 2; // Range: -1 to 1
+  const accelY = (yValue - 0.5) * 2; // Range: -1 to 1
+  
+  // Integrate acceleration to get velocity/position
+  integratedX += accelX * integrationScale;
+  integratedY += accelY * integrationScale;
+  
+  // Clamp position to canvas bounds
+  integratedX = constrain(integratedX, 0, width);
+  integratedY = constrain(integratedY, 0, height);
+  
+  // Z value controls brush size and opacity (use raw Z, not integrated)
+  const brushSize = map(zValue, 0, 1, 2, 20);
+  const opacity = map(zValue, 0, 1, 50, 255);
+  
+  // Draw with integrated position
+  colorMode(HSB);
+  stroke(map(accelX, -1, 1, 0, 360), 255, 255, opacity);
+  colorMode(RGB);
+  
+  strokeWeight(brushSize);
+  
+  // Draw continuous line if we have a previous position
+  if (prevDrawX !== null && prevDrawY !== null) {
+    line(prevDrawX, prevDrawY, integratedX, integratedY);
+  } else {
+    // First time, just place a point
+    point(integratedX, integratedY);
+  }
+  
+  // Store current position for next frame
+  prevDrawX = integratedX;
+  prevDrawY = integratedY;
+  
+  // Debug: Print values to console occasionally
+  if (frameCount % 30 === 0) {
+    console.log(`X: ${xValue.toFixed(3)}, Y: ${yValue.toFixed(3)}, Z: ${zValue.toFixed(3)}, Pos: (${integratedX.toFixed(0)}, ${integratedY.toFixed(0)})`);
+  }
 }
 
 function updateDisplay() {
-  // Update status
-  if (port && port.opened) {
-    statusDiv.html('Status: Connected');
-    statusDiv.style('color', '#0a0');
-  } else {
-    statusDiv.html('Status: Disconnected');
-    statusDiv.style('color', '#c00');
-  }
-  
-  // Update messages (reverse order so newest is at bottom)
+  // Update messages
   let messageText = '';
   for (let i = 0; i < serialMessages.length; i++) {
     messageText += serialMessages[i] + '\n';
@@ -86,6 +162,15 @@ function updateDisplay() {
   
   // Auto-scroll to bottom
   messagesDiv.elt.scrollTop = messagesDiv.elt.scrollHeight;
+}
+
+function windowResized() {
+  if (container) {
+    // Resize canvas to fit container
+    const newWidth = canvasContainer.elt.clientWidth;
+    const newHeight = canvasContainer.elt.clientHeight;
+    resizeCanvas(newWidth, newHeight);
+  }
 }
 
 function keyPressed() {
@@ -213,7 +298,18 @@ async function readLoop() {
 function addSerialMessage(message) {
   // Add timestamp
   const timestamp = nf(hour(), 2) + ':' + nf(minute(), 2) + ':' + nf(second(), 2);
-  serialMessages.push('[' + timestamp + '] ' + message);
+  const timestampedMessage = '[' + timestamp + '] ' + message;
+  serialMessages.push(timestampedMessage);
+  
+  // Parse serial data to extract X, Y, Z values
+  // Expected format: "X: 2.871, Y: 2.872, Z: 0.654"
+  const xMatch = message.match(/X:\s*([\d.]+)/);
+  const yMatch = message.match(/Y:\s*([\d.]+)/);
+  const zMatch = message.match(/Z:\s*([\d.]+)/);
+  
+  if (xMatch) xValue = parseFloat(xMatch[1]) / 3.3; // Normalize to 0-1
+  if (yMatch) yValue = parseFloat(yMatch[1]) / 3.3;
+  if (zMatch) zValue = parseFloat(zMatch[1]) / 3.3;
   
   // Keep only the last N messages
   if (serialMessages.length > maxMessages) {
