@@ -32,7 +32,7 @@ let integratedX = 0;
 let integratedY = 0;
 
 // Absolute 3σ on-thresholds (in volts) — use as-is, no calibration
-const X_LEFT_THRESHOLD = 0.480;
+const X_LEFT_THRESHOLD = 0.420;
 const X_RIGHT_THRESHOLD = 0.552;
 const Y_DOWN_THRESHOLD = 1.087;
 const Y_UP_THRESHOLD = 1.513;
