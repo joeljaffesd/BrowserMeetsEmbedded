@@ -1,0 +1,17 @@
+# _config.yml
+title: BrowserMeetsEmbedded
+theme: jekyll-theme-primer
+
+# (Optional) Only if you use these:
+plugins:
+  - jekyll-seo-tag
+  - jekyll-feed
+
+# Crucial: keep Jekyll away from the submodule + other build-irrelevant dirs
+exclude:
+  - libDaisy/
+  - node_modules/
+  - vendor/
+  - Gemfile
+  - Gemfile.lock
+  - README.md
