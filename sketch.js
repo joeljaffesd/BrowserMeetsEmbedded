@@ -7,18 +7,26 @@ let outputStream;
 let serialMessages = [];
 let maxMessages = 100;
 
-// Serial data values
-let xValue = 0.5;
-let yValue = 0.5;
-let zValue = 0.5;
+// Raw serial volt readings (in volts)
+let xVolt = null;
+let yVolt = null;
+let zVolt = null;
+let hasData = false; // becomes true after first valid parse
 
-// Integrated position (velocity -> position)
+// Pointer position
 let integratedX = 0;
 let integratedY = 0;
-let integratedZ = 0;
 
-// Integration scaling factor (adjust for sensitivity)
-const integrationScale = 0.5;
+// Absolute 3σ on-thresholds (in volts) — use as-is, no calibration
+const X_LEFT_THRESHOLD = 0.480;
+const X_RIGHT_THRESHOLD = 0.552;
+const Y_DOWN_THRESHOLD = 1.087;
+const Y_UP_THRESHOLD = 1.513;
+const Z_THIN_THRESHOLD = 0.900;
+const Z_THICK_THRESHOLD = 1.594;
+
+// Movement speed in pixels per second when a threshold is active
+const MOVE_SPEED = 300; // adjust as desired
 
 // Canvas and layout elements
 let canvas;
@@ -110,46 +118,57 @@ async function setup() {
 }
 
 function draw() {
-  // Convert accelerometer readings to acceleration (centered at 1.65V = 0.5)
-  // Subtract 0.5 to center at 0, then scale for acceleration
-  const accelX = (xValue - 0.5) * 2; // Range: -1 to 1
-  const accelY = (yValue - 0.5) * 2; // Range: -1 to 1
-  
-  // Integrate acceleration to get velocity/position
-  integratedX += accelX * integrationScale;
-  integratedY += accelY * integrationScale;
-  
+  // Time step (seconds)
+  const dt = (typeof deltaTime === 'number' ? deltaTime : 16.67) / 1000;
+
+  // If we don't have data yet, just show the point and wait
+  if (!hasData) {
+    stroke(255, 200);
+    strokeWeight(4);
+    point(integratedX, integratedY);
+    prevDrawX = integratedX;
+    prevDrawY = integratedY;
+    return;
+  }
+
+  // Determine movement from absolute thresholds
+  let dx = 0;
+  let dy = 0;
+  if (xVolt !== null) {
+    if (xVolt < X_LEFT_THRESHOLD) dx = -MOVE_SPEED;
+    else if (xVolt > X_RIGHT_THRESHOLD) dx = MOVE_SPEED;
+  }
+  if (yVolt !== null) {
+    if (yVolt < Y_DOWN_THRESHOLD) dy = MOVE_SPEED; // canvas y increases downward
+    else if (yVolt > Y_UP_THRESHOLD) dy = -MOVE_SPEED;
+  }
+
+  // Integrate position with constant speed while thresholds are active
+  integratedX += dx * dt;
+  integratedY += dy * dt;
+
   // Clamp position to canvas bounds
   integratedX = constrain(integratedX, 0, width);
   integratedY = constrain(integratedY, 0, height);
-  
-  // Z value controls brush size and opacity (use raw Z, not integrated)
-  const brushSize = map(zValue, 0, 1, 2, 20);
-  const opacity = map(zValue, 0, 1, 50, 255);
-  
-  // Draw with integrated position
-  colorMode(HSB);
-  stroke(map(accelX, -1, 1, 0, 360), 255, 255, opacity);
-  colorMode(RGB);
-  
+
+  // Brush thickness from Z absolute thresholds
+  let brushSize = 4; // default mid
+  if (zVolt !== null) {
+    if (zVolt < Z_THIN_THRESHOLD) brushSize = 2;
+    else if (zVolt > Z_THICK_THRESHOLD) brushSize = 12;
+    else brushSize = 6;
+  }
+
+  // Draw path
+  stroke(255, 220);
   strokeWeight(brushSize);
-  
-  // Draw continuous line if we have a previous position
   if (prevDrawX !== null && prevDrawY !== null) {
     line(prevDrawX, prevDrawY, integratedX, integratedY);
   } else {
-    // First time, just place a point
     point(integratedX, integratedY);
   }
-  
-  // Store current position for next frame
   prevDrawX = integratedX;
   prevDrawY = integratedY;
-  
-  // Debug: Print values to console occasionally
-  if (frameCount % 30 === 0) {
-    console.log(`X: ${xValue.toFixed(3)}, Y: ${yValue.toFixed(3)}, Z: ${zValue.toFixed(3)}, Pos: (${integratedX.toFixed(0)}, ${integratedY.toFixed(0)})`);
-  }
 }
 
 function updateDisplay() {
@@ -177,6 +196,16 @@ function keyPressed() {
   // Press space to reconnect
   if (key === ' ') {
     connectToDevice();
+  }
+  // 'c' is no-op in absolute-threshold mode (kept for compatibility)
+  if (key === 'c' || key === 'C') {
+    addSerialMessage('Calibration disabled: using fixed absolute thresholds.');
+  }
+  // Press 'r' to recenter the brush
+  if (key === 'r' || key === 'R') {
+    integratedX = width / 2;
+    integratedY = height / 2;
+    addSerialMessage('Position reset');
   }
 }
 
@@ -251,15 +280,25 @@ function addSerialMessage(message) {
   const timestampedMessage = '[' + timestamp + '] ' + message;
   serialMessages.push(timestampedMessage);
   
-  // Parse serial data to extract X, Y, Z values
+  // Parse serial data to extract X, Y, Z values (in volts)
   // Expected format: "X: 2.871, Y: 2.872, Z: 0.654"
-  const xMatch = message.match(/X:\s*([\d.]+)/);
-  const yMatch = message.match(/Y:\s*([\d.]+)/);
-  const zMatch = message.match(/Z:\s*([\d.]+)/);
-  
-  if (xMatch) xValue = parseFloat(xMatch[1]) / 3.3; // Normalize to 0-1
-  if (yMatch) yValue = parseFloat(yMatch[1]) / 3.3;
-  if (zMatch) zValue = parseFloat(zMatch[1]) / 3.3;
+  const xMatch = message.match(/X:\s*([-.\d]+)/);
+  const yMatch = message.match(/Y:\s*([-.\d]+)/);
+  const zMatch = message.match(/Z:\s*([-.\d]+)/);
+
+  const parseVolt = (m) => {
+    if (!m) return null;
+    const v = parseFloat(m[1]);
+    return isFinite(v) ? v : null;
+  };
+
+  const xv = parseVolt(xMatch);
+  const yv = parseVolt(yMatch);
+  const zv = parseVolt(zMatch);
+  if (xv !== null) xVolt = xv;
+  if (yv !== null) yVolt = yv;
+  if (zv !== null) zVolt = zv;
+  if (!hasData && (xVolt !== null || yVolt !== null || zVolt !== null)) hasData = true;
   
   // Keep only the last N messages
   if (serialMessages.length > maxMessages) {
