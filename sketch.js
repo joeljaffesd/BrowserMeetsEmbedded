@@ -38,6 +38,19 @@ const Y_DOWN_THRESHOLD = 1.087; // lower = down
 const Y_UP_THRESHOLD = 1.513; // higher = up
 const Z_THIN_THRESHOLD = 0.900; // lower = thin
 const Z_THICK_THRESHOLD = 1.594; // higher = thick
+// Mutable copies used by UI sliders (defaults preserved; logic will reference these)
+let xLeftThresh = X_LEFT_THRESHOLD;
+let xRightThresh = X_RIGHT_THRESHOLD;
+let yDownThresh = Y_DOWN_THRESHOLD;
+let yUpThresh = Y_UP_THRESHOLD;
+let zThinThresh = Z_THIN_THRESHOLD;
+let zThickThresh = Z_THICK_THRESHOLD;
+
+// UI elements for thresholds
+let uiContainer;
+let sliderElems = {};
+let valueSpans = {};
+let resetBtn;
 
 // Movement speed in pixels per second when a threshold is active
 const MOVE_SPEED = 300; // adjust as desired
@@ -126,6 +139,9 @@ async function setup() {
   
   // Automatically open Serial device selector on page load
   await connectToDevice();
+
+  // Create threshold UI (top-right overlay)
+  createThresholdUI();
   
   // Handle window resize
   window.addEventListener('resize', windowResized);
@@ -149,12 +165,12 @@ function draw() {
   let dx = 0;
   let dy = 0;
   if (xVolt !== null) {
-    if (xVolt < X_LEFT_THRESHOLD) dx = -MOVE_SPEED;
-    else if (xVolt > X_RIGHT_THRESHOLD) dx = MOVE_SPEED;
+    if (xVolt < xLeftThresh) dx = -MOVE_SPEED;
+    else if (xVolt > xRightThresh) dx = MOVE_SPEED;
   }
   if (yVolt !== null) {
-    if (yVolt < Y_DOWN_THRESHOLD) dy = MOVE_SPEED; // canvas y increases downward
-    else if (yVolt > Y_UP_THRESHOLD) dy = -MOVE_SPEED;
+    if (yVolt < yDownThresh) dy = MOVE_SPEED; // canvas y increases downward
+    else if (yVolt > yUpThresh) dy = -MOVE_SPEED;
   }
 
   // Integrate position with constant speed while thresholds are active
@@ -168,8 +184,8 @@ function draw() {
   // Brush thickness from Z absolute thresholds
   let brushSize = 4; // default mid
   if (zVolt !== null) {
-    if (zVolt < Z_THIN_THRESHOLD) brushSize = 2;
-    else if (zVolt > Z_THICK_THRESHOLD) brushSize = 18; // thicker
+    if (zVolt < zThinThresh) brushSize = 2;
+    else if (zVolt > zThickThresh) brushSize = 18; // thicker
     else brushSize = 6;
   }
 
@@ -191,6 +207,112 @@ function draw() {
   }
   prevDrawX = integratedX;
   prevDrawY = integratedY;
+}
+
+// Build the slider UI without altering the original defaults
+function createThresholdUI() {
+  uiContainer = createDiv();
+  uiContainer.parent(containerDiv);
+  uiContainer.style('position', 'absolute');
+  uiContainer.style('top', '10px');
+  uiContainer.style('right', '75px');
+  uiContainer.style('background', 'rgba(0,0,0,0.75)');
+  uiContainer.style('border', '1px solid #444');
+  uiContainer.style('padding', '8px 10px');
+  uiContainer.style('border-radius', '6px');
+  uiContainer.style('font-family', 'Courier New, monospace');
+  uiContainer.style('color', '#ddd');
+  uiContainer.style('z-index', '1000');
+  uiContainer.style('max-width', '220px');
+  uiContainer.style('font-size', '11px');
+
+  const title = createDiv('Thresholds (adjust if desired)');
+  title.parent(uiContainer);
+  title.style('font-weight', 'bold');
+  title.style('margin-bottom', '4px');
+  title.style('color', '#fff');
+
+  const defsNotice = createDiv('Defaults unchanged until moved');
+  defsNotice.parent(uiContainer);
+  defsNotice.style('font-size', '10px');
+  defsNotice.style('color', '#aaa');
+  defsNotice.style('margin-bottom', '6px');
+
+  const slidersConfig = [
+    { key: 'xLeft', label: 'X Left',    min: 0.30, max: 0.60, step: 0.001, get: () => xLeftThresh,    set: v => xLeftThresh = v },
+    { key: 'xRight', label: 'X Right',  min: 0.40, max: 0.70, step: 0.001, get: () => xRightThresh,  set: v => xRightThresh = v },
+    { key: 'yDown', label: 'Y Down',    min: 0.90, max: 1.30, step: 0.001, get: () => yDownThresh,   set: v => yDownThresh = v },
+    { key: 'yUp',   label: 'Y Up',      min: 1.30, max: 1.70, step: 0.001, get: () => yUpThresh,     set: v => yUpThresh = v },
+    { key: 'zThin', label: 'Z Thin',    min: 0.60, max: 1.10, step: 0.001, get: () => zThinThresh,   set: v => zThinThresh = v },
+    { key: 'zThick',label: 'Z Thick',   min: 1.30, max: 1.90, step: 0.001, get: () => zThickThresh,  set: v => zThickThresh = v },
+  ];
+
+  slidersConfig.forEach(cfg => {
+    const row = createDiv();
+    row.parent(uiContainer);
+    row.style('display', 'flex');
+    row.style('align-items', 'center');
+    row.style('gap', '4px');
+    row.style('margin-bottom', '4px');
+
+    const label = createSpan(cfg.label + ':');
+    label.parent(row);
+    label.style('flex', '0 0 52px');
+
+    const slider = createSlider(cfg.min, cfg.max, cfg.get(), cfg.step);
+    slider.parent(row);
+    slider.style('flex', '1');
+    slider.input(() => {
+      cfg.set(Number(slider.value()));
+      updateThresholdUI();
+    });
+    sliderElems[cfg.key] = slider;
+
+    const valSpan = createSpan(formatThresh(cfg.get()));
+    valSpan.parent(row);
+    valSpan.style('flex', '0 0 54px');
+    valSpan.style('text-align', 'right');
+    valueSpans[cfg.key] = valSpan;
+  });
+
+  resetBtn = createButton('Reset');
+  resetBtn.parent(uiContainer);
+  resetBtn.style('width', '100%');
+  resetBtn.style('margin-top', '4px');
+  resetBtn.mousePressed(() => resetThresholds());
+
+  updateThresholdUI();
+}
+
+function formatThresh(v) {
+  return (typeof v === 'number') ? v.toFixed(3) : '--';
+}
+
+function updateThresholdUI() {
+  if (!valueSpans) return;
+  valueSpans['xLeft'] && valueSpans['xLeft'].html(formatThresh(xLeftThresh));
+  valueSpans['xRight'] && valueSpans['xRight'].html(formatThresh(xRightThresh));
+  valueSpans['yDown'] && valueSpans['yDown'].html(formatThresh(yDownThresh));
+  valueSpans['yUp'] && valueSpans['yUp'].html(formatThresh(yUpThresh));
+  valueSpans['zThin'] && valueSpans['zThin'].html(formatThresh(zThinThresh));
+  valueSpans['zThick'] && valueSpans['zThick'].html(formatThresh(zThickThresh));
+}
+
+function resetThresholds() {
+  xLeftThresh = X_LEFT_THRESHOLD;
+  xRightThresh = X_RIGHT_THRESHOLD;
+  yDownThresh = Y_DOWN_THRESHOLD;
+  yUpThresh = Y_UP_THRESHOLD;
+  zThinThresh = Z_THIN_THRESHOLD;
+  zThickThresh = Z_THICK_THRESHOLD;
+  // Update sliders to defaults
+  sliderElems['xLeft'] && sliderElems['xLeft'].value(xLeftThresh);
+  sliderElems['xRight'] && sliderElems['xRight'].value(xRightThresh);
+  sliderElems['yDown'] && sliderElems['yDown'].value(yDownThresh);
+  sliderElems['yUp'] && sliderElems['yUp'].value(yUpThresh);
+  sliderElems['zThin'] && sliderElems['zThin'].value(zThinThresh);
+  sliderElems['zThick'] && sliderElems['zThick'].value(zThickThresh);
+  updateThresholdUI();
 }
 
 function updateDisplay() {
