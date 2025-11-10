@@ -1,3 +1,15 @@
+/*
+We consulted copilot's Claude Haiku, Claude Sonnet, Grok Fast, and ChatGPT-5 to help configure this sketch and debug the thresholding to create parametric drawings.
+
+INSTRUCTIONS:
+Direction: The X reading steers left/right (lower = left, higher = right). The Y reading steers up/down (higher = up, lower = down). It keeps moving while a side or up/down reading is past its limit.
+
+Size: The Z reading sets brush thickness: low = thin, middle = medium, high = thick.
+
+Color: The line takes a rainbow color based on the direction it’s moving; if it’s not moving, it stays white.
+
+Reset: Press R to put the brush back in the center. Space tries to reconnect. Calibration is fixed (no extra steps needed).
+*/
 let port;
 let reader;
 let inputDone;
