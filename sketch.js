@@ -2,6 +2,8 @@
 We consulted copilot's Claude Haiku, Claude Sonnet, Grok Fast, and ChatGPT-5 to help configure this sketch and debug the thresholding to create parametric drawings.
 
 INSTRUCTIONS:
+This is designed for the Daisy Seed connected to an accelerometer.
+
 Direction: The X reading steers left/right (lower = left, higher = right). The Y reading steers up/down (higher = up, lower = down). It keeps moving while a side or up/down reading is past its limit.
 
 Size: The Z reading sets brush thickness: low = thin, middle = medium, high = thick.
