@@ -102,7 +102,7 @@ async function setup() {
   messagesDiv.style('flex', '1');
   messagesDiv.parent(terminalContainer);
   
-  // Automatically open WebUSB device selector on page load
+  // Automatically open Serial device selector on page load
   await connectToDevice();
   
   // Handle window resize
@@ -165,8 +165,8 @@ function updateDisplay() {
 }
 
 function windowResized() {
-  if (container) {
-    // Resize canvas to fit container
+  // Resize canvas to fit the canvas container if available
+  if (canvasContainer && canvasContainer.elt) {
     const newWidth = canvasContainer.elt.clientWidth;
     const newHeight = canvasContainer.elt.clientHeight;
     resizeCanvas(newWidth, newHeight);
@@ -182,66 +182,36 @@ function keyPressed() {
 
 async function connectToDevice() {
   try {
-    // Check if WebUSB is supported
-    if (!navigator.usb) {
-      addSerialMessage('WebUSB is not supported in this browser!');
-      console.error('WebUSB not supported');
+    // Prefer Web Serial for CDC/virtual COM devices (works out of the box on Windows)
+    if (!('serial' in navigator)) {
+      addSerialMessage('Web Serial is not supported in this browser! Try Chrome/Edge 89+ over HTTPS.');
       return;
     }
-    
-    // Request access to USB device
-    port = await navigator.usb.requestDevice({ 
-      filters: [] // Empty filters to show all devices
+
+    // Request a serial port from the user
+    port = await navigator.serial.requestPort({
+      // Optionally filter by USB vendor/product IDs
+      // filters: [{ usbVendorId: 0x0483 }] // Example: STMicroelectronics
     });
-    
-    addSerialMessage('Device selected: ' + port.productName);
-    console.log('Device info:', port);
-    
-    // Open the device
-    await port.open({ baudRate: 9600 });
-    addSerialMessage('Device opened');
-    
-    // Select configuration #1 for the device
-    if (port.configuration === null) {
-      await port.selectConfiguration(1);
-      addSerialMessage('Configuration selected');
+
+    // Open the selected port. Baud rate is ignored by USB CDC but required by API.
+    await port.open({ baudRate: 115200 });
+    addSerialMessage('Serial port opened');
+
+    // Set up a reader pipeline
+    const textDecoder = new TextDecoderStream();
+    inputDone = port.readable.pipeTo(textDecoder.writable).catch(() => {});
+    reader = textDecoder.readable.getReader();
+
+    // Optional: handle disconnects
+    if (typeof port.addEventListener === 'function') {
+      port.addEventListener('disconnect', () => {
+        addSerialMessage('Device disconnected');
+      });
     }
-    
-    // Log available interfaces
-    console.log('Available interfaces:', port.configuration.interfaces);
-    
-    // Try to claim the first available interface
-    let interfaceClaimed = false;
-    for (let iface of port.configuration.interfaces) {
-      try {
-        addSerialMessage(`Trying interface ${iface.interfaceNumber}...`);
-        await port.claimInterface(iface.interfaceNumber);
-        addSerialMessage(`Claimed interface ${iface.interfaceNumber}`);
-        interfaceClaimed = true;
-        
-        // Log endpoints for debugging
-        console.log('Interface alternates:', iface.alternates);
-        if (iface.alternate && iface.alternate.endpoints) {
-          console.log('Endpoints:', iface.alternate.endpoints);
-        }
-        
-        break; // Successfully claimed an interface
-      } catch (e) {
-        addSerialMessage(`Interface ${iface.interfaceNumber} failed: ${e.message}`);
-        console.error(`Failed to claim interface ${iface.interfaceNumber}:`, e);
-      }
-    }
-    
-    if (!interfaceClaimed) {
-      addSerialMessage('Failed to claim any interface');
-      return;
-    }
-    
+
     addSerialMessage('Connected to device!');
-    
-    // Start reading from the device
     readLoop();
-    
   } catch (error) {
     addSerialMessage('Error: ' + error.message);
     console.error('Connection error:', error);
@@ -249,49 +219,29 @@ async function connectToDevice() {
 }
 
 async function readLoop() {
+  let buffer = '';
   try {
-    // Find the IN endpoint (device to host)
-    let inEndpoint = null;
-    
-    for (let iface of port.configuration.interfaces) {
-      if (iface.claimed && iface.alternate && iface.alternate.endpoints) {
-        for (let endpoint of iface.alternate.endpoints) {
-          console.log('Endpoint:', endpoint);
-          if (endpoint.direction === 'in') {
-            inEndpoint = endpoint.endpointNumber;
-            addSerialMessage(`Using IN endpoint ${inEndpoint}`);
-            break;
-          }
-        }
-      }
-      if (inEndpoint) break;
-    }
-    
-    if (!inEndpoint) {
-      addSerialMessage('No IN endpoint found - will try endpoint 1');
-      inEndpoint = 1;
-    }
-    
-    while (port && port.opened) {
-      // Try to read from the device
-      const result = await port.transferIn(inEndpoint, 64);
-      
-      if (result.data) {
-        const decoder = new TextDecoder();
-        const text = decoder.decode(result.data);
-        if (text.trim().length > 0) {
-          addSerialMessage(text.trim());
+    while (port && port.readable && reader) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value) {
+        buffer += value;
+        // Split on newlines to get complete messages
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop(); // keep incomplete line
+        for (const line of lines) {
+          if (line.trim().length > 0) addSerialMessage(line.trim());
         }
       }
     }
+    // Flush remaining buffer
+    if (buffer.trim().length > 0) addSerialMessage(buffer.trim());
   } catch (error) {
-    if (error.message.includes('device unavailable') || 
-        error.message.includes('disconnected')) {
-      addSerialMessage('Device disconnected');
-    } else {
-      addSerialMessage('Read error: ' + error.message);
-    }
+    addSerialMessage('Read error: ' + error.message);
     console.error('Read error:', error);
+  } finally {
+    try { if (reader) reader.releaseLock(); } catch {}
+    try { if (inputDone) await inputDone; } catch {}
   }
 }
 
@@ -324,7 +274,13 @@ function addSerialMessage(message) {
 
 // Cleanup on page unload
 window.addEventListener('beforeunload', async () => {
-  if (port && port.opened) {
-    await port.close();
-  }
+  try {
+    if (reader) {
+      await reader.cancel();
+      try { reader.releaseLock(); } catch {}
+    }
+    if (port && port.readable) {
+      await port.close();
+    }
+  } catch {}
 });
