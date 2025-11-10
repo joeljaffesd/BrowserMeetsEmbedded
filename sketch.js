@@ -32,12 +32,12 @@ let integratedX = 0;
 let integratedY = 0;
 
 // Absolute 3σ on-thresholds (in volts) — use as-is, no calibration
-const X_LEFT_THRESHOLD = 0.420;
-const X_RIGHT_THRESHOLD = 0.552;
-const Y_DOWN_THRESHOLD = 1.087;
-const Y_UP_THRESHOLD = 1.513;
-const Z_THIN_THRESHOLD = 0.900;
-const Z_THICK_THRESHOLD = 1.594;
+const X_LEFT_THRESHOLD = 0.420; // lower = left
+const X_RIGHT_THRESHOLD = 0.552; // higher = right
+const Y_DOWN_THRESHOLD = 1.087; // lower = down
+const Y_UP_THRESHOLD = 1.513; // higher = up
+const Z_THIN_THRESHOLD = 0.900; // lower = thin
+const Z_THICK_THRESHOLD = 1.594; // higher = thick
 
 // Movement speed in pixels per second when a threshold is active
 const MOVE_SPEED = 300; // adjust as desired
