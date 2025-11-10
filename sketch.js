@@ -155,12 +155,20 @@ function draw() {
   let brushSize = 4; // default mid
   if (zVolt !== null) {
     if (zVolt < Z_THIN_THRESHOLD) brushSize = 2;
-    else if (zVolt > Z_THICK_THRESHOLD) brushSize = 12;
+    else if (zVolt > Z_THICK_THRESHOLD) brushSize = 18; // thicker
     else brushSize = 6;
   }
 
-  // Draw path
-  stroke(255, 220);
+  // Color by direction angle (rainbow)
+  if (dx !== 0 || dy !== 0) {
+    const angle = Math.atan2(dy, dx); // -PI..PI, 0 is right
+    const hue = map(angle, -Math.PI, Math.PI, 0, 360);
+    colorMode(HSB);
+    stroke(hue, 255, 255, 220);
+    colorMode(RGB);
+  } else {
+    stroke(255, 220);
+  }
   strokeWeight(brushSize);
   if (prevDrawX !== null && prevDrawY !== null) {
     line(prevDrawX, prevDrawY, integratedX, integratedY);
